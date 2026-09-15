@@ -3,6 +3,8 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart' show Canvas, Paint, Colors, Offset, Rect, Size;
 
+import 'scale_to_fit.dart';
+
 /// Runs the iterative diffusion inpainting used by the Heal tool, and
 /// renders brush strokes into a mask image. Kept separate from
 /// ShaderEngine since this is a genuinely different kind of operation —
@@ -72,10 +74,7 @@ class HealEngine {
     await _ensureLoaded();
     final program = _diffusionProgram!;
 
-    final longSide = math.max(source.width, source.height);
-    final scale = longSide > workingSize ? workingSize / longSide : 1.0;
-    final w = (source.width * scale).round().clamp(1, source.width);
-    final h = (source.height * scale).round().clamp(1, source.height);
+    final (w, h) = fitWithinMaxDimension(source.width, source.height, workingSize);
 
     ui.Image current = source;
     for (var i = 0; i < iterations; i++) {

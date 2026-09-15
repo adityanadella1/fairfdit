@@ -20,6 +20,7 @@ import '../models/mask_state.dart';
 import '../services/image_processing/coordinate_transform.dart';
 import '../services/image_processing/curve_math.dart';
 import '../services/image_processing/heal_engine.dart';
+import '../services/image_processing/scale_to_fit.dart';
 import '../core/widgets/histogram.dart';
 import '../services/ai/ai_config.dart';
 import '../services/ai/ai_service.dart';
@@ -704,10 +705,7 @@ class EditProvider extends ChangeNotifier {
     notifyListeners();
     try {
       const workingSize = 900;
-      final longSide = math.max(img.width, img.height);
-      final scale = longSide > workingSize ? workingSize / longSide : 1.0;
-      final w = (img.width * scale).round().clamp(1, img.width);
-      final h = (img.height * scale).round().clamp(1, img.height);
+      final (w, h) = fitWithinMaxDimension(img.width, img.height, workingSize);
 
       // Points were captured relative to whatever's currently on screen,
       // which reflects any active crop/straighten/rotate/flip — but the
@@ -938,10 +936,9 @@ class EditProvider extends ChangeNotifier {
         // intended feature, coarse enough to re-render quickly when the
         // edit changes underneath.
         const previewSize = 512;
-        final longSide = math.max(image.width, image.height);
-        final scale = longSide > previewSize ? previewSize / longSide : 1.0;
-        _sampleWidth = (image.width * scale).round().clamp(1, previewSize);
-        _sampleHeight = (image.height * scale).round().clamp(1, previewSize);
+        final sampleSize = fitWithinMaxDimension(image.width, image.height, previewSize);
+        _sampleWidth = sampleSize.$1;
+        _sampleHeight = sampleSize.$2;
         _samplePixels = await _renderRgbaAtMaxDimension(previewSize);
         _sampleSignature = signature;
       } catch (_) {
@@ -1036,10 +1033,7 @@ class EditProvider extends ChangeNotifier {
     notifyListeners();
     try {
       const workingSize = 900;
-      final longSide = math.max(img.width, img.height);
-      final scale = longSide > workingSize ? workingSize / longSide : 1.0;
-      final w = (img.width * scale).round().clamp(1, img.width);
-      final h = (img.height * scale).round().clamp(1, img.height);
+      final (w, h) = fitWithinMaxDimension(img.width, img.height, workingSize);
 
       final imageAspect = img.width / img.height;
       final rawPoints =
@@ -1315,9 +1309,7 @@ class EditProvider extends ChangeNotifier {
       return data.buffer.asUint8List();
     }
 
-    final scale = maxDimension / longSide;
-    final w = (image.width * scale).round().clamp(1, maxDimension);
-    final h = (image.height * scale).round().clamp(1, maxDimension);
+    final (w, h) = fitWithinMaxDimension(image.width, image.height, maxDimension);
 
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
@@ -1395,10 +1387,7 @@ class EditProvider extends ChangeNotifier {
     final outputW = postW * crop.cropWidth;
     final outputH = postH * crop.cropHeight;
 
-    final longSide = math.max(outputW, outputH);
-    final scale = longSide > maxDimension ? maxDimension / longSide : 1.0;
-    final w = (outputW * scale).round().clamp(1, 1 << 20);
-    final h = (outputH * scale).round().clamp(1, 1 << 20);
+    final (w, h) = fitWithinMaxDimension(outputW, outputH, maxDimension);
 
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
