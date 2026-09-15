@@ -1,0 +1,32 @@
+name: fairedit
+description: "FairEdit — a professional non-destructive photo editor."
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+  provider: ^6.1.2
+  flutter_shaders: ^0.1.3
+  image_picker: ^1.1.2
+  path_provider: ^2.1.3
+  path: ^1.9.0
+  uuid: ^4.4.0
+  google_mlkit_selfie_segmentation: ^0.12.1
+  http: ^1.2.2
+  share_plus: ^11.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  shaders:
+    - shaders/edit_shader.frag
+    - shaders/heal_diffusion.frag

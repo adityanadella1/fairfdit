@@ -1,0 +1,90 @@
+# Development / single-node deployment.
+#
+#   docker compose up --build
+#   docker compose run --rm weights   # one-time checkpoint download
+#
+# The GPU reservation needs the NVIDIA container toolkit on the host. For
+# a CPU-only run, delete the `deploy:` block and set FAIREDIT_DEVICE=cpu —
+# it works, but expect tens of seconds per request rather than one or two.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      FAIREDIT_DEVICE: auto
+      FAIREDIT_EAGER_LOAD: "true"
+      FAIREDIT_LOG_LEVEL: INFO
+    volumes:
+      # Named volume, not a bind mount: ~2 GB of checkpoints that should
+      # survive an image rebuild and are not part of the source tree.
+      - weights:/weights
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # Generous, because the first boot with eager loading pulls SAM 2's
+    # weights from Hugging Face before it can answer anything.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/v1/ready"]
+      interval: 30s
+      timeout: 5s
+      start_period: 120s
+      retries: 3
+    restart: unless-stopped
+
+  # CPU-only variant, for machines without an NVIDIA GPU.
+  #   docker compose --profile cpu up --build api-cpu
+  #
+  # Same image contents minus the CUDA runtime and Grounding DINO, which
+  # needs a CUDA extension. /v1/health reports "degraded" and the Flutter
+  # client greys out the text-prompted mask types; Select Subject, Select
+  # Background and AI Remove all still work.
+  api-cpu:
+    build:
+      context: .
+      dockerfile: Dockerfile.cpu
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      FAIREDIT_DEVICE: cpu
+      FAIREDIT_LOG_LEVEL: INFO
+      # Lazy-load here: eager loading on CPU adds minutes to boot for
+      # models a given session may never touch.
+      FAIREDIT_EAGER_LOAD: "false"
+    volumes:
+      - weights:/weights
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/v1/ready"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+    profiles: ["cpu"]
+    restart: unless-stopped
+
+  # One-shot helper: populates the shared weights volume, then exits.
+  #   docker compose run --rm weights
+  weights:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - weights:/weights
+    entrypoint: ["python", "scripts/download_weights.py"]
+    profiles: ["setup"]
+
+volumes:
+  weights:

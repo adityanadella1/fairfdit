@@ -1,0 +1,91 @@
+# CPU-only build of the FairEdit AI backend.
+#
+# For machines without an NVIDIA GPU — laptops with integrated graphics,
+# CI runners, and anyone who wants to exercise the API contract and the
+# Flutter wiring before provisioning GPU hardware.
+#
+# Expect tens of seconds per request rather than one or two. That is fine
+# for verifying that a mask round-trips into the editor correctly, and
+# not fine for actual use.
+#
+# Notably smaller than the CUDA image: no toolchain, no CUDA runtime,
+# ~1.5 GB instead of ~9 GB.
+
+FROM python:3.11-slim AS builder
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --upgrade pip setuptools wheel
+
+# CPU wheels: ~200 MB rather than the ~2.5 GB CUDA build.
+RUN pip install torch==2.5.1 torchvision==0.20.1 \
+        --index-url https://download.pytorch.org/whl/cpu
+
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+
+COPY scripts/fetch_vendor.py scripts/
+# --no-build-isolation is load-bearing here: SAM 2 declares torch as a
+# build dependency, and with isolation on, pip ignores the CPU torch
+# already in this venv and downloads the full CUDA wheel to build
+# against — which is both enormous and pointless in a CPU image.
+ENV PIP_NO_BUILD_ISOLATION=1
+RUN python scripts/fetch_vendor.py --only lama \
+    && pip install --no-build-isolation \
+        "git+https://github.com/facebookresearch/sam2.git"
+
+# Grounding DINO is deliberately NOT installed here. It compiles a CUDA
+# extension at install time; on a CPU-only image the build either fails
+# or produces an extension that cannot run. The service handles its
+# absence as a first-class state — /v1/health reports "degraded" and the
+# Flutter client greys out the text-prompted mask types — so Select
+# Subject, Select Background and AI Remove all still work.
+
+FROM python:3.11-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 libglib2.0-0 curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 1000 fairedit
+
+COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /build/vendor /app/vendor
+
+WORKDIR /app
+COPY --chown=fairedit:fairedit app ./app
+COPY --chown=fairedit:fairedit scripts ./scripts
+
+ENV FAIREDIT_DEVICE=cpu \
+    FAIREDIT_USE_FP16=false \
+    FAIREDIT_WEIGHTS_DIR=/weights \
+    FAIREDIT_VENDOR_DIR=/app/vendor \
+    FAIREDIT_LAMA_DIR=/weights/big-lama \
+    # CPU inference scales superlinearly with pixel count, so the working
+    # resolution comes down. Mask quality is barely affected; latency
+    # roughly halves.
+    FAIREDIT_MAX_INFERENCE_DIMENSION=1024 \
+    FAIREDIT_LAMA_MAX_DIMENSION=768 \
+    # A CPU forward pass can legitimately take a minute or more.
+    FAIREDIT_INFERENCE_TIMEOUT_S=300
+
+RUN mkdir -p /weights && chown fairedit:fairedit /weights
+
+USER fairedit
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD curl -fsS http://localhost:8000/v1/ready || exit 1
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
